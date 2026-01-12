@@ -1,0 +1,38 @@
+name: LOF Arbitrage Monitor
+
+on:
+  schedule:
+    # 建议改为 UTC 06:30 (北京时间 14:30)
+    # 留出 buffer 防止 GitHub 任务队列拥堵导致延迟
+    - cron: '30 6 * * 1-5'
+  workflow_dispatch:      # 允许手动运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11' # 保持跟你本地开发环境一致，Akshare对新版支持较好
+
+    - name: Set Timezone to Shanghai
+      run: |
+        sudo timedatectl set-timezone Asia/Shanghai
+        date # 打印一下当前时间确认时区设置成功
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run script
+      env:
+        # 显式告诉 Python 程序当前时区 (防止某些库获取时间出错)
+        TZ: Asia/Shanghai
+
+      run: |
+        python main.py
