@@ -205,21 +205,6 @@ def fetch_cb_data():
         # import traceback; traceback.print_exc() # 调试时可打开
         return pd.DataFrame()
 
-if __name__ == "__main__":
-    # 测试运行
-    df = fetch_lof_data()
-    if not df.empty:
-        print("\n----- 数据预览 (前5行) -----")
-        print(df[['symbol', 'name', 'price', 'iopv', 'premium_rate']].head())
-
-        # 看看你的关注标的 (比如 161128)
-        print("\n----- 检查 161128 (标普信息) -----")
-        target = df[df['symbol'] == '161128']
-        if not target.empty:
-            print(target[['symbol', 'name', 'price', 'iopv', 'premium_rate']])
-        else:
-            print("未找到 161128，可能是该基金今日无估值数据。")
-
 
 def fetch_today_ipo():
     """
@@ -293,3 +278,55 @@ def fetch_today_ipo():
         print("✅ 今日无申购。")
 
     return ipo_data
+
+
+def fetch_repo_data():
+    """
+    获取国债逆回购实时数据 (GC001 和 R-001)
+    修正版：分别获取沪深两市数据并合并
+    """
+    try:
+        print("💰 [正在获取] 国债逆回购实时利率...")
+
+        # 1. 获取上海市场 (GC系列)
+        try:
+            df_sh = ak.bond_sh_buy_back_em()
+            # 筛选 GC001 (代码 204001)
+            df_sh = df_sh[df_sh['代码'] == '204001'].copy()
+        except Exception as e:
+            print(f"   ⚠️ 上海逆回购接口报错: {e}")
+            df_sh = pd.DataFrame()
+
+        # 2. 获取深圳市场 (R-系列)
+        try:
+            df_sz = ak.bond_sz_buy_back_em()
+            # 筛选 R-001 (代码 131810)
+            df_sz = df_sz[df_sz['代码'] == '131810'].copy()
+        except Exception as e:
+            print(f"   ⚠️ 深圳逆回购接口报错: {e}")
+            df_sz = pd.DataFrame()
+
+        # 3. 合并数据
+        if df_sh.empty and df_sz.empty:
+            return pd.DataFrame()
+
+        df = pd.concat([df_sh, df_sz], ignore_index=True)
+
+        # 4. 数据清洗
+        # 接口返回列名通常为: ['代码', '名称', '最新价', '涨跌幅', ...]
+        # 最新价 即为 年化利率
+        df.rename(columns={
+            '代码': 'code',
+            '名称': 'name',
+            '最新价': 'rate',
+            '涨跌幅': 'change_percent'
+        }, inplace=True)
+
+        # 确保是数字类型
+        df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
+
+        return df
+
+    except Exception as e:
+        print(f"❌ 国债逆回购获取失败: {e}")
+        return pd.DataFrame()

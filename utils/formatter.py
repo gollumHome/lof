@@ -1,9 +1,11 @@
+import datetime
+
 from tabulate import tabulate
 from utils.strategy import analyze_single_lof
 from config import COST_RATE
 
 
-def format_text_report(lof_df, lof_opps, cb_opps=None, ipo_data=None): # 新增 ipo_data 参数
+def format_text_report(lof_df, lof_opps, cb_opps=None, ipo_data=None, repo_list=None): # <--- 新增 repo_list
 
     """
     生成纯文本推送报告
@@ -47,6 +49,27 @@ def format_text_report(lof_df, lof_opps, cb_opps=None, ipo_data=None): # 新增 
         lines.append("\n")  # 空一行
     else:
         lines.append("📅 今日无新股/新债申购。\n")
+
+    # ==============================
+    # 💰 第二部分：国债逆回购 (新增)
+    # ==============================
+    if repo_list:
+        # 只有当利率大于 2.0 或者 是周四的时候才显示，避免垃圾时间占版面
+        # 或者你可以选择永远显示
+        show_repo = any(item['rate'] > 2.0 for item in repo_list) or (datetime.datetime.now().weekday() == 3)
+
+        if show_repo:
+            lines.append("💰 【闲钱理财 · 国债逆回购】")
+            lines.append("💡 操作：选择【卖出】(借钱给别人)")
+            lines.append("-" * 30)
+
+            for item in repo_list:
+                lines.append(f"👉 {item['name']} ({item['code']})")
+                lines.append(f"   年化利率: {item['rate']}% {item['tag']}")
+                lines.append(f"   每10w收益: 约 {item['profit_txt']}")
+                lines.append(f"   📝 {item['advice']}")
+                lines.append("-" * 30)
+            lines.append("\n")
     # ==============================
     # 🚀 第一部分：LOF 套利机会
     # ==============================
