@@ -33,6 +33,8 @@ jobs:
       env:
         # 显式告诉 Python 程序当前时区 (防止某些库获取时间出错)
         TZ: Asia/Shanghai
+         # 企业微信 Webhook
+        WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
 
       run: |
         python main.py
