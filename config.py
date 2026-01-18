@@ -2,8 +2,11 @@
 # 实际运行时会从环境变量读取，本地测试可填入
 import os
 
-import os
-WECOM_WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=084f5dbb-9900-41d7-aede-fd87e053ed07"
+# 从环境变量中安全获取企业微信 Webhook 地址
+WECOM_WEBHOOK_URL = os.environ.get("WECOM_WEBHOOK_URL", "")
+
+if not WECOM_WEBHOOK_URL:
+    print("Warning: WECOM_WEBHOOK_URL is not set!")
 
 # --- 核心费率设置 ---
 # 综合成本 = 申购费(通常1折 0.12%~0.15%) + 卖出佣金(0.02%~0.05%)
