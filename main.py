@@ -7,7 +7,7 @@ from utils.notifier import send_wecom_webhook
 
 def filter_opportunities(df):
     """
-    根据白名单和阈值筛选机会
+    根据白名单、阈值筛选机会
     """
     opps = []
 
