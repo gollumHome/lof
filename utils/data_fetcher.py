@@ -1,7 +1,35 @@
 import datetime
+import time
+import requests
 
 import akshare as ak
 import pandas as pd
+
+# --- 限流重试配置 ---
+API_RETRY_TIMES = 3       # 单个接口最大重试次数
+API_RETRY_INTERVAL = 30   # 重试间隔(秒)，防止触发外部接口限流
+API_CALL_INTERVAL = 10     # 连续调用不同接口之间的最小间隔(秒)
+
+
+def _call_api(func, *args, retry_times=API_RETRY_TIMES, retry_interval=API_RETRY_INTERVAL, **kwargs):
+    """
+    通用限流重试包装：调用 akshare 接口，失败时自动重试
+    成功一次即返回数据，达到最大重试次数则抛出异常
+    """
+    for attempt in range(1, retry_times + 1):
+        try:
+            result = func(*args, **kwargs)
+            # 调用成功后等待一小段时间，避免连续请求触发限流
+            time.sleep(API_CALL_INTERVAL)
+            return result
+        except Exception as e:
+            print(f"   ⚠️ [{func.__name__}] 第{attempt}/{retry_times}次调用失败: {e}")
+            if attempt < retry_times:
+                print(f"   ⏳ {retry_interval}秒后重试...")
+                time.sleep(retry_interval)
+            else:
+                print(f"   ❌ [{func.__name__}] 已达最大重试次数，放弃此接口")
+                raise
 
 
 def fetch_lof_data():
@@ -14,7 +42,7 @@ def fetch_lof_data():
         # 1. 获取行情价格 (Price)
         # ==========================================
         print("1. [正在获取] 行情价格 (fund_lof_spot_em)...")
-        df_price = ak.fund_lof_spot_em()
+        df_price = _call_api(ak.fund_lof_spot_em)
         df_price.rename(columns={"代码": "symbol", "名称": "name", "最新价": "price", "成交额": "volume"}, inplace=True)
         df_price['symbol'] = df_price['symbol'].astype(str)
         # 过滤成交额太小的，但先保留白银LOF
@@ -25,7 +53,7 @@ def fetch_lof_data():
         # ==========================================
         print("2. [正在获取] 实时估值 (fund_value_estimation_em)...")
         try:
-            df_iopv = ak.fund_value_estimation_em()
+            df_iopv = _call_api(ak.fund_value_estimation_em)
             # 动态找列名
             code_col_iopv = next((c for c in df_iopv.columns if "代码" in c), None)
             val_col_iopv = next((c for c in df_iopv.columns if "估算值" in c or "实时估值" in c), None)
@@ -46,7 +74,7 @@ def fetch_lof_data():
         print("3. [正在获取] 官方净值 (fund_open_fund_rank_em)...")
         # 这个接口包含全市场所有基金的最新单位净值
         try:
-            df_nav = ak.fund_open_fund_rank_em(symbol="全部")
+            df_nav = _call_api(ak.fund_open_fund_rank_em, symbol="全部")
             # 通常列名：['基金代码', '基金简称', ..., '单位净值', ...]
             # 同样动态找一下
             code_col_nav = next((c for c in df_nav.columns if "代码" in c), None)
@@ -132,7 +160,7 @@ def fetch_cb_data():
     try:
         print("📥 [正在获取] 可转债实时行情 (bond_cov_comparison)...")
         # 接口：东方财富-可转债比价表
-        df = ak.bond_cov_comparison()
+        df = _call_api(ak.bond_cov_comparison)
 
         # --- 1. 动态寻找关键列名 ---
         col_map = {}
@@ -227,7 +255,7 @@ def fetch_today_ipo():
     try:
         # 接口: 巨潮资讯-数据中心-专题统计-债券报表-债券发行-可转债发行
         # 对应你的版本 __init__.py 中存在的 bond_cov_issue_cninfo
-        df_bond = ak.bond_cov_issue_cninfo()
+        df_bond = _call_api(ak.bond_cov_issue_cninfo)
 
         # 巨潮接口通常返回列：['债券代码', '债券简称', '申购日期', '申购代码', ...]
         if not df_bond.empty:
@@ -253,7 +281,7 @@ def fetch_today_ipo():
     try:
         # 接口: 巨潮资讯-数据中心-新股数据-新股发行
         # 对应你的版本 __init__.py 中存在的 stock_new_ipo_cninfo
-        df_stock = ak.stock_new_ipo_cninfo()
+        df_stock = _call_api(ak.stock_new_ipo_cninfo)
 
         # 巨潮接口通常返回列：['证券代码', '证券简称', '申购日期', '发行价', ...]
         if not df_stock.empty:
@@ -280,50 +308,122 @@ def fetch_today_ipo():
     return ipo_data
 
 
+# def fetch_repo_data():
+#     """
+#     获取国债逆回购实时数据 (GC001 和 R-001)
+#     修正版：分别获取沪深两市数据并合并
+#     """
+#     try:
+#         print("💰 [正在获取] 国债逆回购实时利率...")
+#
+#         # 1. 获取上海市场 (GC系列)
+#         try:
+#             df_sh = _call_api(ak.bond_sh_buy_back_em)
+#             # 筛选 GC001 (代码 204001)
+#             df_sh = df_sh[df_sh['代码'] == '204001'].copy()
+#         except Exception as e:
+#             print(f"   ⚠️ 上海逆回购接口报错: {e}")
+#             df_sh = pd.DataFrame()
+#
+#         # 2. 获取深圳市场 (R-系列)
+#         try:
+#             df_sz = _call_api(ak.bond_sz_buy_back_em)
+#             # 筛选 R-001 (代码 131810)
+#             df_sz = df_sz[df_sz['代码'] == '131810'].copy()
+#         except Exception as e:
+#             print(f"   ⚠️ 深圳逆回购接口报错: {e}")
+#             df_sz = pd.DataFrame()
+#
+#         # 3. 合并数据
+#         if df_sh.empty and df_sz.empty:
+#             return pd.DataFrame()
+#
+#         df = pd.concat([df_sh, df_sz], ignore_index=True)
+#
+#         # 4. 数据清洗
+#         # 接口返回列名通常为: ['代码', '名称', '最新价', '涨跌幅', ...]
+#         # 最新价 即为 年化利率
+#         df.rename(columns={
+#             '代码': 'code',
+#             '名称': 'name',
+#             '最新价': 'rate',
+#             '涨跌幅': 'change_percent'
+#         }, inplace=True)
+#
+#         # 确保是数字类型
+#         df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
+#
+#         return df
+#
+#     except Exception as e:
+#         print(f"❌ 国债逆回购获取失败: {e}")
+#         return pd.DataFrame()
+
+
 def fetch_repo_data():
     """
     获取国债逆回购实时数据 (GC001 和 R-001)
-    修正版：分别获取沪深两市数据并合并
+    稳定版：使用新浪原生接口，完全兼容原返回结构
     """
     try:
-        print("💰 [正在获取] 国债逆回购实时利率...")
+        print("💰 [正在获取] 国债逆回购实时利率 (Sina API)...")
 
-        # 1. 获取上海市场 (GC系列)
+        # 1. 请求数据
+        # sh204001: GC001, sz131810: R-001
+        url = "http://hq.sinajs.cn/list=sh204001,sz131810"
+        headers = {'Referer': 'http://finance.sina.com.cn/'}
+
         try:
-            df_sh = ak.bond_sh_buy_back_em()
-            # 筛选 GC001 (代码 204001)
-            df_sh = df_sh[df_sh['代码'] == '204001'].copy()
+            res = requests.get(url, headers=headers, timeout=5)
+            res.encoding = 'gbk'
         except Exception as e:
-            print(f"   ⚠️ 上海逆回购接口报错: {e}")
-            df_sh = pd.DataFrame()
-
-        # 2. 获取深圳市场 (R-系列)
-        try:
-            df_sz = ak.bond_sz_buy_back_em()
-            # 筛选 R-001 (代码 131810)
-            df_sz = df_sz[df_sz['代码'] == '131810'].copy()
-        except Exception as e:
-            print(f"   ⚠️ 深圳逆回购接口报错: {e}")
-            df_sz = pd.DataFrame()
-
-        # 3. 合并数据
-        if df_sh.empty and df_sz.empty:
+            print(f"   ⚠️ 网络请求失败: {e}")
             return pd.DataFrame()
 
-        df = pd.concat([df_sh, df_sz], ignore_index=True)
+        data_list = []
 
-        # 4. 数据清洗
-        # 接口返回列名通常为: ['代码', '名称', '最新价', '涨跌幅', ...]
-        # 最新价 即为 年化利率
-        df.rename(columns={
-            '代码': 'code',
-            '名称': 'name',
-            '最新价': 'rate',
-            '涨跌幅': 'change_percent'
-        }, inplace=True)
+        # 2. 解析文本
+        for line in res.text.strip().split('\n'):
+            if '="' not in line:
+                continue
 
-        # 确保是数字类型
+            prefix, content = line.split('="')
+            # 提取代码 (从 hq_str_sh204001 中提取 204001)
+            code = prefix.split('_')[-1][2:]
+            fields = content.strip('";').split(',')
+
+            # 字段校验：新浪正常返回有 30 多个字段，fields[3] 是最新价
+            if len(fields) > 3 and fields[0] != "":
+                try:
+                    name = fields[0]
+                    prev_close = float(fields[2]) if fields[2] else 0.0
+                    rate = float(fields[3]) if fields[3] else 0.0
+
+                    # 计算涨跌幅 (计算逻辑增强：仅在有成交时计算)
+                    change_percent = 0.0
+                    if prev_close > 0 and rate > 0:
+                        change_percent = (rate - prev_close) / prev_close * 100
+
+                    data_list.append({
+                        'code': code,
+                        'name': name,
+                        'rate': rate,
+                        'change_percent': change_percent
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+        # 3. 构建 DataFrame
+        if not data_list:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data_list)
+
+        # 4. 类型转换 (确保与原接口完全一致)
         df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
+        df['change_percent'] = pd.to_numeric(df['change_percent'], errors='coerce')
+        # 强制 code 为字符串，防止被识别为数字导致 001 变成 1
+        df['code'] = df['code'].astype(str)
 
         return df
 
