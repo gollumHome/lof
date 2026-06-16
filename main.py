@@ -1,13 +1,21 @@
+import datetime
+import os
+
 from config import TARGET_LOFS, MIN_VOLUME, THRESHOLD_QDII, THRESHOLD_LOCAL, WECOM_WEBHOOK_URL
 from utils.data_fetcher import fetch_lof_data, fetch_cb_data, fetch_today_ipo, fetch_repo_data
 from utils.strategy import analyze_single_lof, filter_double_low_cb, analyze_repo_strategy
 from utils.formatter import format_text_report
 from utils.notifier import send_wecom_webhook
 
+# --- 时间窗口配置 ---
+EXEC_START_HOUR = 9       # 执行窗口开始 (14:00)
+EXEC_END_HOUR = 18        # 执行窗口结束 (15:00)
+MARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".today_done")
+
 
 def filter_opportunities(df):
     """
-    根据白名单、阈值筛选机会
+    根据白名单和阈值筛选机会
     """
     opps = []
 
@@ -44,8 +52,43 @@ def filter_opportunities(df):
     return opps
 
 
+def is_today_done():
+    """检查今日是否已成功执行过"""
+    if not os.path.exists(MARK_FILE):
+        return False
+    try:
+        with open(MARK_FILE, "r") as f:
+            done_date = f.read().strip()
+        return done_date == datetime.datetime.now().strftime("%Y-%m-%d")
+    except:
+        return False
+
+
+def mark_today_done():
+    """标记今日已成功执行"""
+    with open(MARK_FILE, "w") as f:
+        f.write(datetime.datetime.now().strftime("%Y-%m-%d"))
+
+
+def is_in_exec_window():
+    """检查当前是否在执行时间窗口内 (14:00~15:00)"""
+    now = datetime.datetime.now()
+    return EXEC_START_HOUR <= now.hour < EXEC_END_HOUR
+
+
 if __name__ == "__main__":
     print(">>> 启动 A股全能挖掘机 <<<")
+
+    # 检查今日是否已完成
+    if is_today_done():
+        print("✅ 今日已成功执行过，无需重复运行。")
+        exit(0)
+
+    # 检查是否在执行时间窗口内
+    if not is_in_exec_window():
+        now = datetime.datetime.now()
+        print(f"⏰ 当前时间 {now.strftime('%H:%M')}，不在执行窗口 {EXEC_START_HOUR}:00~{EXEC_END_HOUR}:00 内，今日放弃。")
+        exit(0)
 
     # 1. [新增] 获取今日打新数据
     ipo_data = fetch_today_ipo()
@@ -86,3 +129,7 @@ if __name__ == "__main__":
         send_wecom_webhook(WECOM_WEBHOOK_URL, "A股投资日报", report_text)
     else:
         print("今日全市场静悄悄，无任何机会。")
+
+    # 标记今日完成（无论是否有机会，只要流程跑完就算成功）
+    mark_today_done()
+    print("✅ 今日流程执行完成，已标记。")
